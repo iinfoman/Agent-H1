@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-// ─── AGENT H1 ────────────────────────────────────────────────────────────────
 const MODEL = "claude-sonnet-4-20250514";
-const API_KEY = import.meta.env.VITE_ANTHROPIC_KEY;
 const MAX_LOOPS = 6;
 
 const BOOT_LINES = [
@@ -54,24 +52,15 @@ export default function AgentH1() {
     setLog(prev => [...prev, { type, text, loop, id: Date.now() + Math.random() }]);
   };
 
-  const callClaude = async (messages, useSearch = false) => {
-    const body = {
-      model: MODEL,
-      max_tokens: 1000,
-      messages,
-    };
-    if (useSearch) {
-      body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-    }
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const callClaude = async (messages) => {
+    const res = await fetch("/api/claude", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
-      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 1000,
+        messages,
+      }),
     });
     const data = await res.json();
     const text = (data.content || [])
@@ -102,7 +91,6 @@ Create a step-by-step action plan. Each step must be a concrete action (research
 Respond ONLY in this JSON format:
 {
   "mission": "One sentence summary of what you will accomplish",
-  "needs_web_search": true/false,
   "steps": [
     {"id": 1, "action": "action name", "description": "what exactly to do"},
     {"id": 2, "action": "action name", "description": "what exactly to do"}
@@ -137,11 +125,7 @@ PREVIOUS RESULTS: ${stepResults.length > 0 ? stepResults.map((r, idx) => `Step $
 Execute this step fully. Be specific, detailed, and actionable. Produce real usable output — not placeholders.
 Write your output directly. No meta-commentary. Just the work.`;
 
-        const stepResult = await callClaude(
-          [{ role: "user", content: execPrompt }],
-          plan.needs_web_search && i === 0
-        );
-
+        const stepResult = await callClaude([{ role: "user", content: execPrompt }]);
         stepResults.push(stepResult.slice(0, 300));
         addLog("result", stepResult, i + 1);
         await delay(200);
