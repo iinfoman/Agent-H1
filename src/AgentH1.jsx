@@ -1,11 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 
 // ─── AGENT H1 ────────────────────────────────────────────────────────────────
-// A true agentic AI: receives any goal, plans autonomously, loops through
-// tasks using web search, builds outputs, delivers everything end-to-end.
-// ─────────────────────────────────────────────────────────────────────────────
-
 const MODEL = "claude-sonnet-4-20250514";
+const API_KEY = import.meta.env.VITE_ANTHROPIC_KEY;
 const MAX_LOOPS = 6;
 
 const BOOT_LINES = [
@@ -28,17 +25,16 @@ const EXAMPLES = [
 ];
 
 export default function AgentH1() {
-  const [phase, setPhase] = useState("boot"); // boot | idle | running | done
+  const [phase, setPhase] = useState("boot");
   const [bootIdx, setBootIdx] = useState(0);
   const [goal, setGoal] = useState("");
-  const [log, setLog] = useState([]); // { type: 'plan'|'action'|'result'|'think'|'done', text, loop }
+  const [log, setLog] = useState([]);
   const [output, setOutput] = useState(null);
   const [loopCount, setLoopCount] = useState(0);
   const [error, setError] = useState(null);
   const logRef = useRef(null);
   const inputRef = useRef(null);
 
-  // Boot sequence
   useEffect(() => {
     if (phase !== "boot") return;
     if (bootIdx < BOOT_LINES.length) {
@@ -50,7 +46,6 @@ export default function AgentH1() {
     }
   }, [phase, bootIdx]);
 
-  // Auto-scroll log
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
@@ -70,11 +65,15 @@ export default function AgentH1() {
     }
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": API_KEY,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    // Extract all text from content blocks
     const text = (data.content || [])
       .map(b => b.type === "text" ? b.text : "")
       .filter(Boolean)
@@ -91,7 +90,6 @@ export default function AgentH1() {
     setLoopCount(0);
 
     try {
-      // ── STEP 1: PLAN ──────────────────────────────────────────────────────
       addLog("think", "Analyzing mission objective...");
       await delay(400);
 
@@ -116,12 +114,11 @@ Respond ONLY in this JSON format:
 
       addLog("plan", `MISSION: ${plan.mission}`);
       await delay(300);
-      plan.steps.forEach((s, i) => {
+      plan.steps.forEach((s) => {
         addLog("plan", `STEP ${s.id}: ${s.action.toUpperCase()} — ${s.description}`);
       });
       await delay(400);
 
-      // ── STEP 2: EXECUTE EACH STEP ─────────────────────────────────────────
       const stepResults = [];
 
       for (let i = 0; i < plan.steps.length && i < MAX_LOOPS; i++) {
@@ -150,7 +147,6 @@ Write your output directly. No meta-commentary. Just the work.`;
         await delay(200);
       }
 
-      // ── STEP 3: SYNTHESIZE FINAL OUTPUT ───────────────────────────────────
       addLog("think", "Synthesizing all outputs into final deliverable...");
       await delay(400);
 
@@ -162,7 +158,7 @@ MISSION: "${plan.mission}"
 STEP RESULTS:
 ${stepResults.map((r, i) => `--- STEP ${i + 1} ---\n${r}`).join('\n\n')}
 
-Now produce the FINAL COMPLETE DELIVERABLE. This is what the user actually gets.
+Now produce the FINAL COMPLETE DELIVERABLE.
 
 Respond in this JSON format ONLY (no markdown, no backticks):
 {
@@ -205,11 +201,8 @@ Respond in this JSON format ONLY (no markdown, no backticks):
   return (
     <div style={s.root}>
       <style>{css}</style>
-
-      {/* SCANLINE OVERLAY */}
       <div style={s.scanlines} />
 
-      {/* HEADER */}
       <div style={s.header}>
         <div style={s.headerTop}>
           <div style={s.logoBlock}>
@@ -228,7 +221,6 @@ Respond in this JSON format ONLY (no markdown, no backticks):
         <div style={s.tagline}>AUTONOMOUS AI OPERATOR — THINK. ACT. DELIVER.</div>
       </div>
 
-      {/* BOOT PHASE */}
       {phase === "boot" && (
         <div style={s.terminal} className="fade-in">
           {BOOT_LINES.slice(0, bootIdx).map((line, i) => (
@@ -240,11 +232,9 @@ Respond in this JSON format ONLY (no markdown, no backticks):
         </div>
       )}
 
-      {/* IDLE / INPUT */}
       {(phase === "idle" || phase === "running" || phase === "done") && (
         <div style={s.body}>
 
-          {/* MISSION INPUT */}
           {phase === "idle" && (
             <div className="fade-in">
               <div style={s.sectionLabel}>MISSION INPUT</div>
@@ -274,7 +264,6 @@ Respond in this JSON format ONLY (no markdown, no backticks):
             </div>
           )}
 
-          {/* ACTIVE LOG */}
           {(phase === "running" || phase === "done") && (
             <div className="fade-in">
               {phase === "running" && (
@@ -295,7 +284,6 @@ Respond in this JSON format ONLY (no markdown, no backticks):
                 {phase === "running" && <span style={s.cursor} className="blink">█</span>}
               </div>
 
-              {/* FINAL OUTPUT */}
               {phase === "done" && output && (
                 <div style={s.outputWrap} className="fade-in">
                   <div style={s.outputHeader}>
@@ -339,7 +327,7 @@ Respond in this JSON format ONLY (no markdown, no backticks):
                     </div>
                   )}
 
-                  <button style={s.resetBtn} onClick={reset} className="btn-glow">
+                  <button style={{ ...s.resetBtn, marginBottom: 32 }} onClick={reset} className="btn-glow">
                     ↺ NEW MISSION
                   </button>
                 </div>
@@ -349,13 +337,10 @@ Respond in this JSON format ONLY (no markdown, no backticks):
         </div>
       )}
 
-      {/* FOOTER */}
       <div style={s.footer}>AGENT H1 · AUTONOMOUS OPERATIONS · ALL SYSTEMS ACTIVE</div>
     </div>
   );
 }
-
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 const logPrefix = type => ({
   plan:   "PLAN   › ",
@@ -381,14 +366,12 @@ const logTextStyle = type => ({
   wordBreak: "break-word",
 });
 
-// ─── STYLES ──────────────────────────────────────────────────────────────────
-
 const s = {
   root: { background: "#060608", minHeight: "100vh", maxWidth: 500, margin: "0 auto", fontFamily: "'Courier New', Courier, monospace", color: "#ccc", position: "relative", overflow: "hidden" },
   scanlines: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px)", pointerEvents: "none", zIndex: 100 },
   header: { padding: "24px 20px 16px", borderBottom: "1px solid #111", background: "linear-gradient(180deg, #0a0a0f 0%, #060608 100%)" },
   headerTop: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
-  logoBlock: { display: "flex", alignItems: "baseline", gap: 0 },
+  logoBlock: { display: "flex", alignItems: "baseline" },
   logoH: { fontSize: 52, fontWeight: 900, color: "#fff", lineHeight: 1, letterSpacing: -4 },
   logo1: { fontSize: 52, fontWeight: 900, color: "#00ff88", lineHeight: 1 },
   headerRight: { textAlign: "right" },
@@ -431,7 +414,7 @@ const s = {
   platformItem: { fontSize: 13, color: "#aaa", padding: "4px 0", borderBottom: "1px solid #0a0a0f" },
   actionItem: { display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 0", borderBottom: "1px solid #0a0a0f", fontSize: 13, color: "#aaa" },
   actionNum: { background: "#00ff88", color: "#000", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0, marginTop: 1 },
-  resetBtn: { width: "100%", background: "transparent", border: "1px solid #1a1a2a", color: "#444", padding: 14, fontSize: 11, letterSpacing: 3, cursor: "pointer", fontFamily: "'Courier New', monospace", marginTop: 12, marginBottom: 24 },
+  resetBtn: { width: "100%", background: "transparent", border: "1px solid #1a1a2a", color: "#444", padding: 14, fontSize: 11, letterSpacing: 3, cursor: "pointer", fontFamily: "'Courier New', monospace", marginTop: 12 },
   footer: { textAlign: "center", fontSize: 8, letterSpacing: 3, color: "#1a1a2a", padding: "16px 0 24px", borderTop: "1px solid #0e0e0e" },
 };
 
