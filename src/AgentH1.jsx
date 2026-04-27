@@ -53,7 +53,7 @@ export default function AgentH1() {
   };
 
   const callClaude = async (messages) => {
-    const res = await fetch("/api/claude", {
+    const res = await fetch("/.netlify/functions/claude", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
