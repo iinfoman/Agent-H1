@@ -1,17 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 
-// ─── AGENT H1 DEPLOYMENT ENGINE ──────────────────────────────────────────────
-// Autonomous agent: takes any goal, searches web, writes code,
-// creates GitHub repo, deploys to Netlify, fixes errors, delivers live URL.
-// ─────────────────────────────────────────────────────────────────────────────
-
 const MODEL = "claude-sonnet-4-20250514";
 
 const BOOT_LINES = [
   "AGENT H1 DEPLOYMENT ENGINE INITIALIZING...",
   "GITHUB API MODULE: ONLINE",
   "NETLIFY API MODULE: ONLINE",
-  "WEB SEARCH MODULE: ONLINE",
   "CODE GENERATION ENGINE: ONLINE",
   "ERROR CORRECTION LOOP: ONLINE",
   "ALL SYSTEMS NOMINAL.",
@@ -28,7 +22,6 @@ export default function AgentH1Deploy() {
   const [error, setError] = useState(null);
   const logRef = useRef(null);
 
-  // Boot sequence
   useEffect(() => {
     if (phase !== "boot") return;
     if (bootIdx < BOOT_LINES.length) {
@@ -49,26 +42,19 @@ export default function AgentH1Deploy() {
 
   const delay = ms => new Promise(r => setTimeout(r, ms));
 
-  // ── CALL CLAUDE ─────────────────────────────────────────────────────────────
-  const callClaude = async (messages, useSearch = false) => {
-    const body = { model: MODEL, max_tokens: 1000, messages };
-    if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+  // ── CALL CLAUDE VIA NETLIFY FUNCTION ────────────────────────────────────────
+  const callClaude = async (messages) => {
+    const res = await fetch("/.netlify/functions/claude", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": "PLACEHOLDER",
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
-      body: JSON.stringify(body)
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: MODEL, max_tokens: 1000, messages })
     });
     const data = await res.json();
     return (data.content || []).map(b => b.text || "").filter(Boolean).join("\n");
   };
 
-  // ── GITHUB API ──────────────────────────────────────────────────────────────
-  const githubRequest = async (path, method = "GET", body = null) => {
+  // ── GITHUB API ───────────────────────────────────────────────────────────────
+  const github = async (path, method = "GET", body = null) => {
     const res = await fetch(`https://api.github.com${path}`, {
       method,
       headers: {
@@ -81,8 +67,8 @@ export default function AgentH1Deploy() {
     return res.json();
   };
 
-  // ── NETLIFY API ─────────────────────────────────────────────────────────────
-  const netlifyRequest = async (path, method = "GET", body = null) => {
+  // ── NETLIFY API ──────────────────────────────────────────────────────────────
+  const netlify = async (path, method = "GET", body = null) => {
     const res = await fetch(`https://api.netlify.com/api/v1${path}`, {
       method,
       headers: {
@@ -94,7 +80,7 @@ export default function AgentH1Deploy() {
     return res.json();
   };
 
-  // ── MAIN AGENT LOOP ─────────────────────────────────────────────────────────
+  // ── MAIN AGENT ───────────────────────────────────────────────────────────────
   const runAgent = async () => {
     setPhase("running");
     setLog([]);
@@ -102,90 +88,87 @@ export default function AgentH1Deploy() {
     setError(null);
 
     try {
-      // STEP 1: Research
-      addLog("think", "Researching your goal...");
+      // STEP 1: Plan
+      addLog("think", "Analyzing mission...");
       await delay(300);
-      const research = await callClaude([{
-        role: "user",
-        content: `Research and plan this goal: "${goal}". Return a JSON object with:
-{
-  "projectName": "short-kebab-case-name",
-  "title": "Human readable title",
-  "description": "What this project does",
-  "techStack": "html/css/js or react",
-  "sections": ["list of sections/pages needed"]
-}
-Only JSON, no markdown.`
-      }], true);
 
-      const plan = JSON.parse(research.replace(/```json|```/g, "").trim());
+      const planRaw = await callClaude([{
+        role: "user",
+        content: `You are Agent H1. Plan this project: "${goal}"
+
+Return ONLY this JSON (no markdown):
+{
+  "projectName": "short-kebab-case-name-max-20-chars",
+  "title": "Human readable title",
+  "description": "One sentence description",
+  "sections": ["section1", "section2", "section3"]
+}`
+      }]);
+
+      const plan = JSON.parse(planRaw.replace(/```json|```/g, "").trim());
       addLog("plan", `PROJECT: ${plan.title}`);
-      addLog("plan", `STACK: ${plan.techStack}`);
       addLog("plan", `SECTIONS: ${plan.sections.join(", ")}`);
       await delay(300);
 
       // STEP 2: Generate code
       addLog("action", "GENERATING CODE...");
-      await delay(300);
+      const htmlCode = await callClaude([{
+        role: "user",
+        content: `Build a complete beautiful website for: "${goal}"
 
-      const codePrompt = `Build a complete, beautiful, production-ready website for: "${goal}"
-
-Project: ${plan.title}
+Title: ${plan.title}
 Description: ${plan.description}
-Sections needed: ${plan.sections.join(", ")}
+Sections: ${plan.sections.join(", ")}
 
 Requirements:
 - Single HTML file with embedded CSS and JS
-- Modern, professional design with dark theme
+- Dark modern design with gradients and animations
 - Mobile responsive
-- Real content, not placeholder text
-- Impressive visuals with gradients and animations
-- Complete and ready to deploy
+- Real compelling content not placeholders
+- Professional and impressive
 
-Return ONLY the complete HTML file content. No explanation. No markdown. Just the HTML.`;
+Return ONLY the complete HTML. No explanation. No markdown. Just raw HTML starting with <!DOCTYPE html>`
+      }]);
 
-      const htmlCode = await callClaude([{ role: "user", content: codePrompt }]);
-      addLog("result", `Generated ${htmlCode.length} characters of code`);
+      addLog("result", `Code generated: ${htmlCode.length} characters`);
       await delay(300);
 
       // STEP 3: Create GitHub repo
       addLog("action", "CREATING GITHUB REPO...");
-      const repoName = `${plan.projectName}-${Date.now()}`.slice(0, 40);
-      const repo = await githubRequest("/user/repos", "POST", {
+      const repoName = plan.projectName.slice(0, 20) + "-" + Date.now().toString().slice(-5);
+      const repo = await github("/user/repos", "POST", {
         name: repoName,
         description: plan.description,
         private: false,
         auto_init: false
       });
 
-      if (!repo.full_name) throw new Error("Failed to create GitHub repo");
-      addLog("result", `REPO CREATED: ${repo.full_name}`);
-      await delay(500);
+      if (!repo.full_name) throw new Error(`GitHub repo failed: ${JSON.stringify(repo)}`);
+      addLog("result", `REPO: github.com/${repo.full_name}`);
+      await delay(400);
 
-      // STEP 4: Push code to GitHub
+      // STEP 4: Push files
       addLog("action", "PUSHING CODE TO GITHUB...");
-      const encoded = btoa(unescape(encodeURIComponent(htmlCode)));
-      await githubRequest(`/repos/${repo.full_name}/contents/index.html`, "PUT", {
-        message: "Initial commit - Agent H1",
-        content: encoded
+
+      const toBase64 = str => btoa(unescape(encodeURIComponent(str)));
+
+      await github(`/repos/${repo.full_name}/contents/index.html`, "PUT", {
+        message: "Add website - Agent H1",
+        content: toBase64(htmlCode)
       });
 
-      // Push netlify.toml
-      const tomlContent = btoa(`[build]\n  publish = "."\n`);
-      await githubRequest(`/repos/${repo.full_name}/contents/netlify.toml`, "PUT", {
+      await github(`/repos/${repo.full_name}/contents/netlify.toml`, "PUT", {
         message: "Add Netlify config",
-        content: tomlContent
+        content: toBase64(`[build]\n  publish = "."`)
       });
 
-      addLog("result", "CODE PUSHED TO GITHUB");
-      await delay(500);
+      addLog("result", "FILES PUSHED TO GITHUB");
+      await delay(400);
 
-      // STEP 5: Get GitHub user info
-      const user = await githubRequest("/user");
-      addLog("action", "CONNECTING TO NETLIFY...");
+      // STEP 5: Deploy to Netlify
+      addLog("action", "DEPLOYING TO NETLIFY...");
 
-      // STEP 6: Deploy to Netlify
-      const site = await netlifyRequest("/sites", "POST", {
+      const site = await netlify("/sites", "POST", {
         name: repoName,
         repo: {
           provider: "github",
@@ -196,35 +179,17 @@ Return ONLY the complete HTML file content. No explanation. No markdown. Just th
         }
       });
 
-      if (!site.id) {
-        // Try manual deploy instead
-        addLog("think", "Trying direct deploy method...");
-        const site2 = await netlifyRequest("/sites", "POST", {
-          name: repoName
-        });
+      await delay(2000);
 
-        if (site2.id) {
-          addLog("result", `SITE CREATED: ${site2.default_domain || site2.name}`);
-          setResult({
-            title: plan.title,
-            repoUrl: repo.html_url,
-            siteUrl: `https://${site2.default_domain || repoName + ".netlify.app"}`,
-            siteId: site2.id
-          });
-        } else {
-          throw new Error("Netlify deploy failed");
-        }
-      } else {
-        addLog("result", `SITE DEPLOYED: ${site.default_domain || site.name}`);
-        setResult({
-          title: plan.title,
-          repoUrl: repo.html_url,
-          siteUrl: `https://${site.default_domain || repoName + ".netlify.app"}`,
-          siteId: site.id
-        });
-      }
-
+      const siteUrl = site.ssl_url || site.url || `https://${repoName}.netlify.app`;
+      addLog("result", `SITE: ${siteUrl}`);
       addLog("done", "MISSION COMPLETE. SITE IS LIVE.");
+
+      setResult({
+        title: plan.title,
+        repoUrl: repo.html_url,
+        siteUrl
+      });
       setPhase("done");
 
     } catch (e) {
@@ -248,7 +213,6 @@ Return ONLY the complete HTML file content. No explanation. No markdown. Just th
       <style>{css}</style>
       <div style={s.scanlines} />
 
-      {/* HEADER */}
       <div style={s.header}>
         <div style={s.headerTop}>
           <div style={s.logo}><span style={s.logoH}>H</span><span style={s.logo1}>1</span></div>
@@ -270,7 +234,6 @@ Return ONLY the complete HTML file content. No explanation. No markdown. Just th
         <div style={s.tagline}>AUTONOMOUS BUILD · DEPLOY · DELIVER</div>
       </div>
 
-      {/* BOOT */}
       {phase === "boot" && (
         <div style={s.terminal} className="fade-in">
           {BOOT_LINES.slice(0, bootIdx).map((line, i) => (
@@ -282,76 +245,43 @@ Return ONLY the complete HTML file content. No explanation. No markdown. Just th
         </div>
       )}
 
-      {/* TOKEN INPUT */}
       {phase === "tokens" && (
         <div style={s.body} className="fade-in">
           <div style={s.sectionLabel}>CREDENTIALS REQUIRED</div>
-          <p style={s.hint}>Your tokens are stored in memory only. Never saved anywhere.</p>
-
+          <p style={s.hint}>Stored in memory only. Never saved anywhere.</p>
           <div style={s.fieldGroup}>
             <label style={s.label}>GITHUB PERSONAL ACCESS TOKEN</label>
-            <input
-              style={s.input}
-              type="password"
-              placeholder="ghp_xxxxxxxxxxxx"
-              value={tokens.github}
-              onChange={e => setTokens({ ...tokens, github: e.target.value })}
-            />
+            <input style={s.input} type="password" placeholder="ghp_xxxxxxxxxxxx" value={tokens.github} onChange={e => setTokens({ ...tokens, github: e.target.value })} />
           </div>
-
           <div style={s.fieldGroup}>
             <label style={s.label}>NETLIFY PERSONAL ACCESS TOKEN</label>
-            <input
-              style={s.input}
-              type="password"
-              placeholder="nfp_xxxxxxxxxxxx"
-              value={tokens.netlify}
-              onChange={e => setTokens({ ...tokens, netlify: e.target.value })}
-            />
+            <input style={s.input} type="password" placeholder="nfp_xxxxxxxxxxxx" value={tokens.netlify} onChange={e => setTokens({ ...tokens, netlify: e.target.value })} />
           </div>
-
-          <button
-            style={s.btn}
-            onClick={() => {
-              if (tokens.github && tokens.netlify) setPhase("ready");
-            }}
-            className="btn-glow"
-          >
+          <button style={s.btn} onClick={() => { if (tokens.github && tokens.netlify) setPhase("ready"); }} className="btn-glow">
             ⚡ AUTHENTICATE & PROCEED
           </button>
         </div>
       )}
 
-      {/* MISSION INPUT */}
       {phase === "ready" && (
         <div style={s.body} className="fade-in">
           <div style={s.sectionLabel}>MISSION INPUT</div>
-          <textarea
-            style={s.textarea}
-            rows={3}
-            placeholder="Describe what you want built and deployed... e.g. 'Build a landing page for a barber shop called Fresh Cuts in Johannesburg'"
-            value={goal}
-            onChange={e => setGoal(e.target.value)}
-            autoFocus
-          />
+          <textarea style={s.textarea} rows={3} placeholder="Describe what to build and deploy... e.g. 'Build a landing page for a barber shop called Fresh Cuts'" value={goal} onChange={e => setGoal(e.target.value)} autoFocus />
           {error && <div style={s.errorBox}>{error}</div>}
           <div style={s.examples}>
             {[
               "Build a landing page for a barber shop called Fresh Cuts",
               "Create a portfolio site for a photographer",
-              "Build a restaurant menu website for Spice Garden",
+              "Build a restaurant website for Spice Garden",
               "Create a coming soon page for my AI startup"
             ].map((ex, i) => (
               <div key={i} style={s.chip} onClick={() => setGoal(ex)} className="chip-hover">{ex}</div>
             ))}
           </div>
-          <button style={s.btn} onClick={runAgent} className="btn-glow">
-            ⚡ DEPLOY AGENT H1
-          </button>
+          <button style={s.btn} onClick={runAgent} className="btn-glow">⚡ DEPLOY AGENT H1</button>
         </div>
       )}
 
-      {/* RUNNING / DONE */}
       {(phase === "running" || phase === "done" || phase === "error") && (
         <div style={s.body} className="fade-in">
           {phase === "running" && (
@@ -375,23 +305,20 @@ Return ONLY the complete HTML file content. No explanation. No markdown. Just th
             <div style={s.resultCard} className="fade-in">
               <div style={s.resultBadge}>✓ DEPLOYED SUCCESSFULLY</div>
               <h2 style={s.resultTitle}>{result.title}</h2>
-
               <div style={s.linkRow}>
                 <div style={s.linkLabel}>LIVE SITE</div>
                 <a href={result.siteUrl} target="_blank" rel="noreferrer" style={s.link}>{result.siteUrl}</a>
               </div>
-
               <div style={s.linkRow}>
                 <div style={s.linkLabel}>GITHUB REPO</div>
                 <a href={result.repoUrl} target="_blank" rel="noreferrer" style={s.link}>{result.repoUrl}</a>
               </div>
-
               <button style={s.resetBtn} onClick={reset} className="btn-glow">↺ NEW MISSION</button>
             </div>
           )}
 
           {phase === "error" && (
-            <div style={s.body}>
+            <div>
               <div style={s.errorBox}>{error}</div>
               <button style={s.btn} onClick={reset} className="btn-glow">↺ RETRY</button>
             </div>
