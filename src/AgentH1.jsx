@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 
-const MODEL = "claude-sonnet-4-20250514";
+const MODEL = "gemini";
 
 const BOOT_LINES = [
   "AGENT H1 DEPLOYMENT ENGINE INITIALIZING...",
@@ -16,19 +16,36 @@ export default function AgentH1Deploy() {
   const [phase, setPhase] = useState("boot");
   const [bootIdx, setBootIdx] = useState(0);
   const [tokens, setTokens] = useState({ github: "", netlify: "" });
+  const [tokensLoaded, setTokensLoaded] = useState(false);
   const [goal, setGoal] = useState("");
   const [log, setLog] = useState([]);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const logRef = useRef(null);
 
+  // Boot sequence
   useEffect(() => {
     if (phase !== "boot") return;
     if (bootIdx < BOOT_LINES.length) {
       const t = setTimeout(() => setBootIdx(i => i + 1), 200 + Math.random() * 120);
       return () => clearTimeout(t);
     } else {
-      setTimeout(() => setPhase("tokens"), 500);
+      setTimeout(() => {
+        // Load saved tokens
+        const saved = localStorage.getItem("agentH1Tokens");
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (parsed.github && parsed.netlify) {
+              setTokens(parsed);
+              setTokensLoaded(true);
+              setPhase("ready");
+              return;
+            }
+          } catch (e) {}
+        }
+        setPhase("tokens");
+      }, 500);
     }
   }, [phase, bootIdx]);
 
@@ -42,18 +59,30 @@ export default function AgentH1Deploy() {
 
   const delay = ms => new Promise(r => setTimeout(r, ms));
 
-  // ── CALL CLAUDE VIA NETLIFY FUNCTION ────────────────────────────────────────
-  const callClaude = async (messages) => {
+  const saveTokens = (t) => {
+    localStorage.setItem("agentH1Tokens", JSON.stringify(t));
+  };
+
+  const clearTokens = () => {
+    localStorage.removeItem("agentH1Tokens");
+    setTokens({ github: "", netlify: "" });
+    setTokensLoaded(false);
+    setPhase("tokens");
+  };
+
+  // ── CALL AI VIA NETLIFY FUNCTION ─────────────────────────────────────────
+  const callAI = async (messages) => {
     const res = await fetch("/.netlify/functions/claude", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: MODEL, max_tokens: 1000, messages })
+      body: JSON.stringify({ messages })
     });
     const data = await res.json();
+    if (data.error) throw new Error(data.error);
     return (data.content || []).map(b => b.text || "").filter(Boolean).join("\n");
   };
 
-  // ── GITHUB API ───────────────────────────────────────────────────────────────
+  // ── GITHUB API ────────────────────────────────────────────────────────────
   const github = async (path, method = "GET", body = null) => {
     const res = await fetch(`https://api.github.com${path}`, {
       method,
@@ -67,8 +96,8 @@ export default function AgentH1Deploy() {
     return res.json();
   };
 
-  // ── NETLIFY API ──────────────────────────────────────────────────────────────
-  const netlify = async (path, method = "GET", body = null) => {
+  // ── NETLIFY API ───────────────────────────────────────────────────────────
+  const netlifyApi = async (path, method = "GET", body = null) => {
     const res = await fetch(`https://api.netlify.com/api/v1${path}`, {
       method,
       headers: {
@@ -80,7 +109,7 @@ export default function AgentH1Deploy() {
     return res.json();
   };
 
-  // ── MAIN AGENT ───────────────────────────────────────────────────────────────
+  // ── MAIN AGENT ────────────────────────────────────────────────────────────
   const runAgent = async () => {
     setPhase("running");
     setLog([]);
@@ -92,13 +121,13 @@ export default function AgentH1Deploy() {
       addLog("think", "Analyzing mission...");
       await delay(300);
 
-      const planRaw = await callClaude([{
+      const planRaw = await callAI([{
         role: "user",
         content: `You are Agent H1. Plan this project: "${goal}"
 
-Return ONLY this JSON (no markdown):
+Return ONLY this JSON (no markdown, no backticks):
 {
-  "projectName": "short-kebab-case-name-max-20-chars",
+  "projectName": "short-kebab-case-max-15-chars",
   "title": "Human readable title",
   "description": "One sentence description",
   "sections": ["section1", "section2", "section3"]
@@ -112,12 +141,12 @@ Return ONLY this JSON (no markdown):
 
       // STEP 2: Generate code
       addLog("action", "GENERATING CODE...");
-      const htmlCode = await callClaude([{
+      const htmlCode = await callAI([{
         role: "user",
         content: `Build a complete beautiful website for: "${goal}"
 
 Title: ${plan.title}
-Description: ${plan.description}
+Description: ${plan.description}  
 Sections: ${plan.sections.join(", ")}
 
 Requirements:
@@ -125,7 +154,7 @@ Requirements:
 - Dark modern design with gradients and animations
 - Mobile responsive
 - Real compelling content not placeholders
-- Professional and impressive
+- Professional and impressive visuals
 
 Return ONLY the complete HTML. No explanation. No markdown. Just raw HTML starting with <!DOCTYPE html>`
       }]);
@@ -135,7 +164,8 @@ Return ONLY the complete HTML. No explanation. No markdown. Just raw HTML starti
 
       // STEP 3: Create GitHub repo
       addLog("action", "CREATING GITHUB REPO...");
-      const repoName = plan.projectName.slice(0, 20) + "-" + Date.now().toString().slice(-5);
+      const repoName = plan.projectName.slice(0, 15) + "-" + Date.now().toString().slice(-4);
+
       const repo = await github("/user/repos", "POST", {
         name: repoName,
         description: plan.description,
@@ -143,13 +173,12 @@ Return ONLY the complete HTML. No explanation. No markdown. Just raw HTML starti
         auto_init: false
       });
 
-      if (!repo.full_name) throw new Error(`GitHub repo failed: ${JSON.stringify(repo)}`);
+      if (!repo.full_name) throw new Error(`GitHub: ${repo.message || "repo creation failed"}`);
       addLog("result", `REPO: github.com/${repo.full_name}`);
       await delay(400);
 
       // STEP 4: Push files
       addLog("action", "PUSHING CODE TO GITHUB...");
-
       const toBase64 = str => btoa(unescape(encodeURIComponent(str)));
 
       await github(`/repos/${repo.full_name}/contents/index.html`, "PUT", {
@@ -168,7 +197,7 @@ Return ONLY the complete HTML. No explanation. No markdown. Just raw HTML starti
       // STEP 5: Deploy to Netlify
       addLog("action", "DEPLOYING TO NETLIFY...");
 
-      const site = await netlify("/sites", "POST", {
+      const site = await netlifyApi("/sites", "POST", {
         name: repoName,
         repo: {
           provider: "github",
@@ -248,7 +277,7 @@ Return ONLY the complete HTML. No explanation. No markdown. Just raw HTML starti
       {phase === "tokens" && (
         <div style={s.body} className="fade-in">
           <div style={s.sectionLabel}>CREDENTIALS REQUIRED</div>
-          <p style={s.hint}>Stored in memory only. Never saved anywhere.</p>
+          <p style={s.hint}>Enter once — saved securely in your browser forever.</p>
           <div style={s.fieldGroup}>
             <label style={s.label}>GITHUB PERSONAL ACCESS TOKEN</label>
             <input style={s.input} type="password" placeholder="ghp_xxxxxxxxxxxx" value={tokens.github} onChange={e => setTokens({ ...tokens, github: e.target.value })} />
@@ -257,14 +286,26 @@ Return ONLY the complete HTML. No explanation. No markdown. Just raw HTML starti
             <label style={s.label}>NETLIFY PERSONAL ACCESS TOKEN</label>
             <input style={s.input} type="password" placeholder="nfp_xxxxxxxxxxxx" value={tokens.netlify} onChange={e => setTokens({ ...tokens, netlify: e.target.value })} />
           </div>
-          <button style={s.btn} onClick={() => { if (tokens.github && tokens.netlify) setPhase("ready"); }} className="btn-glow">
-            ⚡ AUTHENTICATE & PROCEED
+          <button style={s.btn} onClick={() => {
+            if (tokens.github && tokens.netlify) {
+              saveTokens(tokens);
+              setTokensLoaded(true);
+              setPhase("ready");
+            }
+          }} className="btn-glow">
+            ⚡ AUTHENTICATE & SAVE
           </button>
         </div>
       )}
 
       {phase === "ready" && (
         <div style={s.body} className="fade-in">
+          {tokensLoaded && (
+            <div style={s.credsBanner}>
+              <span style={s.credsText}>✓ CREDENTIALS LOADED</span>
+              <span style={s.credsReset} onClick={clearTokens}>Reset</span>
+            </div>
+          )}
           <div style={s.sectionLabel}>MISSION INPUT</div>
           <textarea style={s.textarea} rows={3} placeholder="Describe what to build and deploy... e.g. 'Build a landing page for a barber shop called Fresh Cuts'" value={goal} onChange={e => setGoal(e.target.value)} autoFocus />
           {error && <div style={s.errorBox}>{error}</div>}
@@ -369,6 +410,9 @@ const s = {
   cursor: { color: "#00ff88", display: "inline-block", fontSize: 14 },
   bootLine: { padding: "3px 0", fontSize: 12, color: "#444" },
   prompt: { color: "#00ff88", marginRight: 6 },
+  credsBanner: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "#0a1a0f", border: "1px solid #1a3a2a", padding: "8px 12px", marginBottom: 16 },
+  credsText: { fontSize: 10, letterSpacing: 2, color: "#00ff88" },
+  credsReset: { fontSize: 10, color: "#444", cursor: "pointer", textDecoration: "underline" },
   resultCard: { background: "#080810", border: "1px solid #1a1a2a", borderTop: "2px solid #00ff88", padding: 20, marginBottom: 16 },
   resultBadge: { fontSize: 9, letterSpacing: 3, color: "#00ff88", marginBottom: 10 },
   resultTitle: { fontSize: 20, fontWeight: 700, color: "#fff", margin: "0 0 16px" },
